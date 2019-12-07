@@ -3,6 +3,8 @@ import pandas
 from pathlib import Path
 from ipywidgets import widgets, Layout
 from IPython.display import clear_output, display
+import torch
+import numpy as np
 
 
 def create_csv_with_image_paths(csv_path, csv_image_column, image_folder, attributes=None, image_extension='.jpg'):
@@ -32,3 +34,39 @@ def create_csv_with_image_paths(csv_path, csv_image_column, image_folder, attrib
     df = pandas.DataFrame(rows, columns=columns, dtype=pandas.CategoricalDtype)
     df.to_csv(csv_path, index_label='id')
     return df, rows, columns
+
+
+
+from fastai.data_block import CategoryListBase
+class LabelCls(CategoryListBase):
+    
+    def __init__(self, labels, path, **kwargs):
+        # labels : array of class values e.g. [5,0,2]
+        ATTRIBUTES = kwargs['ATTRIBUTES']
+        kwargs.pop('ATTRIBUTES')
+        
+        self.one_hot_map = {}
+        self.classes = []
+        self.attribute_label_endpoints = []
+        self.labels=[]
+        global_class_idx = 0
+        for attribute_idx, attribute in enumerate(ATTRIBUTES.keys()):
+            label_segment_start = global_class_idx
+            self.one_hot_map[attribute_idx]={}
+            classes_of_attribute = ATTRIBUTES[attribute]
+            self.classes+=classes_of_attribute
+            for class_idx, class_name in enumerate(classes_of_attribute):
+                self.one_hot_map[attribute_idx][class_name]=global_class_idx
+                global_class_idx+=1
+            label_segment_end = global_class_idx
+            self.attribute_label_endpoints.append((label_segment_start, label_segment_end))
+        for label in labels:
+            new_label = np.zeros(len(self.classes))
+            for attribute_idx, class_name in enumerate(label):
+                class_idx = self.one_hot_map[attribute_idx][class_name]
+                new_label[class_idx]=1
+            self.labels.append(new_label)            
+        super().__init__(self.labels, classes=self.classes, **kwargs)
+        
+    def get(self, i):
+        return self.labels[i]

@@ -124,18 +124,22 @@ class MultilabelerActiveLearningWidget(MultilabelerWidget):
         assert(self.learner is not None)
         self.unlabeled_list = None
         self.df = None
+        self.requests = None
+        self.reindexed_df = None
         self.sort_by_confusion()
         self.render()
         
     def train_epochs(self, event):
         self.learner.fit_one_cycle(1)
         
-    def sort_by_confusion(self, event=None):
+    def sort_by_confusion(self, event=None, ascending=True):
+        print(ascending)
+        print(event)
         import fastai
         from fastai.vision import ImageList
         import torch
         import torch.nn.functional as F
-        self.df = self.original_df[self.original_df[self.attribute]==self.unlabeled_tag][:300]
+        self.df = self.original_df[self.original_df[self.attribute]==self.unlabeled_tag][:10]
         path_stupid_fix = self.image_folder.parent.parent
         unlabeled_il = ImageList.from_df(self.df,
                                            path=path_stupid_fix,
@@ -153,10 +157,10 @@ class MultilabelerActiveLearningWidget(MultilabelerWidget):
 
         log_probs = torch.log(probs) # most confusing will be low
         U = (probs * log_probs).sum(1) # most confusing will still be low
-        requests = U.sort()[1] # sorts in ascending order - so most confusing first
-        print("SORT DF", len(self.df))
-        print("SORT REQUESTS", len(requests))
-        self.df.reindex(requests)
+        self.requests = U.sort(descending = not ascending)[1] # sorts in ascending order - so most confusing first
+        row_array = [row for row in self.df.iterrows()]
+        reindexed_row_array = [row_array[i][1] for i in self.requests]
+        self.df = pandas.DataFrame(reindexed_row_array)
         self.to_beginning()
         self.render()
         
@@ -186,9 +190,12 @@ class MultilabelerActiveLearningWidget(MultilabelerWidget):
         train_button = widgets.Button(description="Train")
         train_button.on_click(self.train_epochs)
         control_components.append(train_button)
-        sort_button = widgets.Button(description="Sort")
-        sort_button.on_click(self.sort_by_confusion)
-        control_components.append(sort_button)
+        sort_most_confusing_button = widgets.Button(description="Most Confusing")
+        sort_most_confusing_button.on_click(partial(self.sort_by_confusion, ascending=True))
+        sort_least_confusing_button = widgets.Button(description="Least Confusing")
+        sort_least_confusing_button.on_click(partial(self.sort_by_confusion, ascending=False))
+        control_components.append(sort_most_confusing_button)
+        control_components.append(sort_least_confusing_button)
         
         return control_components
         
