@@ -46,6 +46,7 @@ class LabelCls(CategoryListBase):
         kwargs.pop('ATTRIBUTES')
         
         self.one_hot_map = {}
+        self.class_map = {}
         self.classes = []
         self.attribute_label_endpoints = []
         self.labels=[]
@@ -53,19 +54,30 @@ class LabelCls(CategoryListBase):
         for attribute_idx, attribute in enumerate(ATTRIBUTES.keys()):
             label_segment_start = global_class_idx
             self.one_hot_map[attribute_idx]={}
-            classes_of_attribute = ATTRIBUTES[attribute]
+            self.class_map[attribute_idx]={}
+            classes_of_attribute = ATTRIBUTES[attribute][:-2]
             self.classes+=classes_of_attribute
             for class_idx, class_name in enumerate(classes_of_attribute):
                 self.one_hot_map[attribute_idx][class_name]=global_class_idx
+                self.class_map[attribute_idx][class_name]=class_idx
                 global_class_idx+=1
             label_segment_end = global_class_idx
             self.attribute_label_endpoints.append((label_segment_start, label_segment_end))
         for label in labels:
-            new_label = np.zeros(len(self.classes))
-            for attribute_idx, class_name in enumerate(label):
-                class_idx = self.one_hot_map[attribute_idx][class_name]
-                new_label[class_idx]=1
-            self.labels.append(new_label)            
+            int_label = np.zeros(len(ATTRIBUTES), dtype=int)
+            one_hot_label = np.zeros(len(self.classes), dtype=int)
+            if isinstance(label, list):
+                for attribute_idx, class_name in enumerate(label):
+                    class_idx = self.one_hot_map[attribute_idx][class_name]
+                    one_hot_label[class_idx]=1
+                    int_label[attribute_idx]=self.class_map[attribute_idx][class_name]
+            else:
+                class_name=label
+                class_idx = self.one_hot_map[0][class_name]
+                one_hot_label[class_idx]=1
+                int_label=self.class_map[0][class_name]
+            
+            self.labels.append(int_label)
         super().__init__(self.labels, classes=self.classes, **kwargs)
         
     def get(self, i):

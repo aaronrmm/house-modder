@@ -12,6 +12,7 @@ class MultilabelerWidget:
         self.csv_path = csv_path
         self.original_df = pandas.read_csv(csv_path)
         self.df = self.original_df
+        self.image_label_column=None
         self.max = len(self.df)
         self.width = width
         self.height = height
@@ -56,6 +57,10 @@ class MultilabelerWidget:
             row_index = row['id']
             child_components = []
             
+            if self.image_label_column is not None:
+                prediction_label = widgets.Label(value=str(row[self.image_label_column]))
+                child_components.append(prediction_label)
+
             #image
             file_path = row[self.image_column]
             with open(self.image_folder/file_path, "rb") as file:
@@ -114,16 +119,19 @@ class MultilabelerWidget:
 
 class MultilabelerActiveLearningWidget(MultilabelerWidget):
     
-    def __init__(self, learner, unlabeled_tag, classifier_export, csv_path, image_folder, image_column, attributes, width=300, height=300):
-        
+    def __init__(self, learner, unlabeled_tag, classifier_export, csv_path, image_folder, image_column, attributes, width=300, height=300, sample_size = 300):
+        self.sample_size = sample_size
         self.attribute = list(attributes)[0]
         self.unlabeled_tag = unlabeled_tag
+        self.confusion_index = -1
         super().__init__(csv_path, image_folder, image_column, attributes, width, height)
         self.original_df = self.df
         self.learner = learner
         assert(self.learner is not None)
         self.unlabeled_list = None
         self.df = None
+        self.image_label_column = None
+        self.probs = [-1 for _ in range(self.sample_size)]
         self.requests = None
         self.reindexed_df = None
         self.sort_by_confusion()
@@ -133,33 +141,40 @@ class MultilabelerActiveLearningWidget(MultilabelerWidget):
         self.learner.fit_one_cycle(1)
         
     def sort_by_confusion(self, event=None, ascending=True):
-        print(ascending)
-        print(event)
         import fastai
         from fastai.vision import ImageList
         import torch
         import torch.nn.functional as F
-        self.df = self.original_df[self.original_df[self.attribute]==self.unlabeled_tag][:10]
+        self.df = self.original_df[self.original_df[self.attribute]==self.unlabeled_tag][:self.sample_size]
         path_stupid_fix = self.image_folder.parent.parent
         unlabeled_il = ImageList.from_df(self.df,
                                            path=path_stupid_fix,
                                            folder=self.image_folder.relative_to(path_stupid_fix), suffix=None, 
                                            cols=self.image_column)
 
-        probs = torch.zeros([len(unlabeled_il), self.learner.data.c])  # todo 2 -> num classes
+        self.probs = torch.zeros([len(unlabeled_il), self.learner.data.c])  # todo 2 -> num classes
         with torch.no_grad():
             for idx in progress_bar(range(len(unlabeled_il))):
                 instance = self.learner.data.one_item(unlabeled_il[idx])
                 out = self.learner.model(instance[0])
                 prob = F.softmax(out, dim=1)
-                probs[idx] += prob.cpu()[0]
-            probs /=2
+                self.probs[idx] += prob.cpu()[0]
+            self.probs /=self.learner.data.c
 
-        log_probs = torch.log(probs) # most confusing will be low
-        U = (probs * log_probs).sum(1) # most confusing will still be low
+        log_probs = torch.log(self.probs) # most confusing will be low
+        if self.confusion_index==-1:
+            U = (self.probs * log_probs).sum(1) # most confusing will still be low
+        else:
+            U = (self.probs * log_probs)[:,self.confusion_index] # most confusing will still be low
         self.requests = U.sort(descending = not ascending)[1] # sorts in ascending order - so most confusing first
         row_array = [row for row in self.df.iterrows()]
         reindexed_row_array = [row_array[i][1] for i in self.requests]
+        reindexed_row_array = []
+        for row_idx in self.requests:
+            row = row_array[row_idx][1]
+            row['prediction'] = self.attributes[self.attribute][int(self.probs[row_idx].argmax())]
+            reindexed_row_array.append(row)
+        self.image_label_column = ['prediction']
         self.df = pandas.DataFrame(reindexed_row_array)
         self.to_beginning()
         self.render()
@@ -168,6 +183,12 @@ class MultilabelerActiveLearningWidget(MultilabelerWidget):
         new_value = change.new
         self.attribute = new_value
         self.sort_by_confusion()
+
+    def on_confusion_class_change(self, change):
+        attribute_index = change.owner.index
+        self.confusion_index = attribute_index
+        new_value = change.new
+        self.sort_by_confusion(ascending=True)
         
     def generate_control_widgets(self):
         control_components = []
@@ -196,6 +217,16 @@ class MultilabelerActiveLearningWidget(MultilabelerWidget):
         sort_least_confusing_button.on_click(partial(self.sort_by_confusion, ascending=False))
         control_components.append(sort_most_confusing_button)
         control_components.append(sort_least_confusing_button)
+
+        options = self.attributes[self.attribute]+["None"]
+        confusion_class_dropdown = dropdown_widget = widgets.Dropdown(
+            options = options,
+            description = 'Attribute',
+            disabled = False,
+            value = options[self.confusion_index]
+        )
+        confusion_class_dropdown.observe(self.on_confusion_class_change, names='value')
+        control_components.append(confusion_class_dropdown)
         
         return control_components
         
